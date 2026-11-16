@@ -98,7 +98,6 @@ class RemoteService : AccessibilityService(), WebServer.Listener {
             val html = assets.open("index.html").use { it.readBytes() }
             server = WebServer(prefs.port, prefs.pin, html, this).also { it.start() }
             if (RelayConfig.ENABLED) connectRelay()
-            lastError = null
         } catch (e: Exception) {
             server = null
             lastError = "Cannot open port ${prefs.port}: ${e.message}"
@@ -146,6 +145,8 @@ class RemoteService : AccessibilityService(), WebServer.Listener {
                 scheduleRelayReconnect()
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                lastError = "Relay failed: ${t.message} HTTP ${response?.code}"
+                android.util.Log.e("vitRemote", lastError ?: "Relay failed", t)
                 val c = relayClient; relayClient = null; relayWs = null
                 if (c != null) onClose(c)
                 scheduleRelayReconnect()
