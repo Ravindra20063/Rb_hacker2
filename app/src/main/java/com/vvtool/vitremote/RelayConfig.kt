@@ -6,6 +6,6 @@ package com.vvtool.vitremote
  */
 object RelayConfig {
     const val ENABLED = true
-    const val RELAY_URL = "https://YOUR-WORKER.workers.dev"
-    const val PAIRING_SECRET = "REPLACE_WITH_LONG_RANDOM_SECRET_32_CHARS_MIN"
+    const val RELAY_URL = "https://vitremote-relay.bhatiravindara64.workers.dev"
+    const val PAIRING_SECRET = "00d64a41a58048d93a4219ffac9fbd5c259a7ee90eb0ae427746a2e2dc87323a"
 }
