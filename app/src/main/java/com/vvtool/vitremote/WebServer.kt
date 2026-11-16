@@ -246,7 +246,8 @@ class WebServer(
                 else -> { buf[1] = 127; for (i in 0 until 8) buf[2 + i] = (n.toLong() shr (56 - 8 * i)).toByte() }
             }
             System.arraycopy(data, 0, buf, hl, n)
-            try { out.write(buf); out.flush() } catch (_: Exception) { close() }
+            val stream = out ?: return
+            try { stream.write(buf); stream.flush() } catch (_: Exception) { close() }
         }
 
         fun close() {
