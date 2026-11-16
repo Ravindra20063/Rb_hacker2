@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vitRemote</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0..1,0&display=block">
+<style>
+:root{--primary:#3d5afe;--on-primary:#fff;--pc:#dfe0ff;--on-pc:#00105c;--bg:#fbf8ff;--s1:#f3f1fb;--s2:#e9e7f3;--on:#1b1b21;--var:#46464f;--outline:#c6c5d0;--error:#ba1a1a;--ok:#1e8e3e}
+@media (prefers-color-scheme:dark){:root{--primary:#b9c3ff;--on-primary:#11277f;--pc:#2c3e96;--on-pc:#dfe0ff;--bg:#121318;--s1:#1b1b21;--s2:#292a2f;--on:#e4e1e9;--var:#c6c5d0;--outline:#46464f;--error:#ffb4ab;--ok:#7dd99a}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden}
+body{background:var(--bg);color:var(--on);font:400 14px/20px Roboto,system-ui,sans-serif}
+.ms{font-family:'Material Symbols Rounded';font-size:24px;line-height:1;font-weight:normal;font-style:normal;white-space:nowrap;-webkit-font-smoothing:antialiased;font-feature-settings:'liga';user-select:none}
+.app{height:100%;display:flex;gap:28px;padding:20px;justify-content:center;align-items:stretch}
+.phone{height:100%;display:flex;gap:12px;align-items:center;min-width:0}
+.col{height:100%;display:flex;flex-direction:column;align-items:center;gap:10px}
+#scr{height:calc(100% - 82px);flex:none;aspect-ratio:9/19.5;background:#000;border-radius:24px;overflow:hidden;position:relative;touch-action:none;user-select:none;box-shadow:0 2px 12px rgba(0,0,0,.25);cursor:pointer}
+#scr video,#scr img,#scr canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;pointer-events:none;-webkit-user-drag:none}
+#ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#9a9aa6;pointer-events:none;text-align:center;padding:16px}
+#ph .ms{font-size:40px}
+.nav{display:flex;gap:4px;background:var(--s1);border-radius:28px;padding:4px}
+.side{display:flex;flex-direction:column;gap:10px}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;position:relative;overflow:hidden;-webkit-tap-highlight-color:transparent;touch-action:none}
+button::after{content:"";position:absolute;inset:0;background:currentColor;opacity:0;transition:opacity .15s}
+button:hover::after{opacity:.08}button:active::after,button.held::after{opacity:.16}
+.ib{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--s1);color:var(--var)}
+.nav .ib{width:68px;height:44px;border-radius:22px;background:none}
+#pw{background:var(--pc);color:var(--on-pc)}
+#pw .ring{position:absolute;inset:0;border-radius:50%;background:conic-gradient(var(--primary) var(--p,0%),transparent 0);-webkit-mask:radial-gradient(circle,transparent 21px,#000 22px);mask:radial-gradient(circle,transparent 21px,#000 22px)}
+.panel{width:300px;display:flex;flex-direction:column;gap:12px;min-height:0}
+.head{display:flex;align-items:center;gap:10px}
+.head h1{font-size:22px;font-weight:400;margin:0}
+.chip{margin-left:auto;display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--outline);border-radius:8px;font-size:12px;font-weight:500;color:var(--var)}
+.chip i{width:8px;height:8px;border-radius:50%;background:var(--error)}
+.seg{display:flex;border:1px solid var(--outline);border-radius:20px;overflow:hidden;height:36px}
+.seg button{flex:1;font-size:13px;font-weight:500;border-left:1px solid var(--outline);display:flex;align-items:center;justify-content:center;gap:4px}
+.seg button:first-child{border-left:0}
+.seg button.on{background:var(--pc);color:var(--on-pc)}
+.seg .ms{font-size:16px;display:none}.seg .on .ms{display:inline}
+.card{background:var(--s1);border-radius:20px;padding:6px 16px;overflow:auto;min-height:0}
+.li{display:flex;gap:14px;align-items:center;padding:8px 0}
+.li .ms{color:var(--primary);font-size:20px}
+.li div{min-width:0;flex:1}
+.li small{display:block;font-size:11px;color:var(--var);line-height:14px}
+.li b{font-weight:400;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prog{height:3px;border-radius:2px;background:var(--s2);margin-top:4px;overflow:hidden}.prog i{display:block;height:100%;background:var(--primary)}
+.kb{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--var);padding:0 4px}
+.kb.on{color:var(--primary)}
+#stat{font-size:11px;color:var(--var);height:14px;white-space:nowrap}
+@media (max-width:760px){.panel{display:none}.app{padding:12px}}
+#login{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9}
+.dialog{background:var(--s2);border-radius:28px;padding:24px;width:min(320px,90vw);text-align:center}
+.dialog h2{font-size:22px;font-weight:400;margin:10px 0 18px}
+.dialog input{width:100%;height:52px;border:1px solid var(--outline);border-radius:12px;background:none;color:inherit;font:inherit;font-size:22px;letter-spacing:.4em;text-align:center;outline:0}
+.dialog input:focus{border:2px solid var(--primary)}
+#lerr{color:var(--error);font-size:12px;min-height:18px;margin:6px 0}
+.filled{background:var(--primary);color:var(--on-primary);height:40px;border-radius:20px;padding:0 24px;font-weight:500;width:100%}
+#snack{position:fixed;left:50%;bottom:20px;transform:translate(-50%,20px);background:var(--on);color:var(--bg);padding:12px 16px;border-radius:6px;opacity:0;transition:.2s;pointer-events:none;z-index:10}
+#snack.show{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+<div id="login"><div class="dialog">
+ <span class="ms" style="color:var(--primary);font-size:32px">lock</span>
+ <h2>Enter PIN</h2>
+ <input id="pin" type="password" inputmode="numeric" maxlength="6" autofocus>
+ <div id="lerr"></div>
+ <button class="filled" onclick="login()">Connect</button>
+</div></div>
+
+<div class="app">
+ <div class="phone">
+  <div class="col">
+   <div id="scr"><video id="vid" muted playsinline></video><canvas id="cv"></canvas><img id="img" alt=""><div id="ph"><span class="ms">screen_share</span><span id="phTxt">Connecting…</span></div></div>
+   <div class="nav">
+    <button class="ib" title="Back (Esc)" onclick="a('back')"><span class="ms">arrow_back_ios_new</span></button>
+    <button class="ib" title="Home" onclick="a('home')"><span class="ms">radio_button_unchecked</span></button>
+    <button class="ib" title="Recents" onclick="a('recents')"><span class="ms">check_box_outline_blank</span></button>
+   </div>
+   <div id="stat"></div>
+  </div>
+  <div class="side">
+   <button class="ib" id="pw" title="Tap: screen off / wake · Hold: power menu"><span class="ring"></span><span class="ms">power_settings_new</span></button>
+   <button class="ib" id="vu" title="Volume up"><span class="ms">volume_up</span></button>
+   <button class="ib" id="vd" title="Volume down"><span class="ms">volume_down</span></button>
+   <button class="ib" title="Save screenshot" onclick="shot()"><span class="ms">photo_camera</span></button>
+  </div>
+ </div>
+ <div class="panel">
+  <div class="head"><span class="ms" style="color:var(--primary)">cast</span><h1>vitRemote</h1><span class="chip"><i id="dot"></i><span id="stt">Offline</span></span></div>
+  <div class="seg" id="seg"><button data-q="auto"><span class="ms">check</span>Auto</button><button data-q="low"><span class="ms">check</span>Low</button><button data-q="med"><span class="ms">check</span>Medium</button><button data-q="high"><span class="ms">check</span>High</button></div>
+  <a id="fast" class="kb" style="display:none;text-decoration:none;color:var(--primary)"><span class="ms">bolt</span><span>Switch to low-latency mode (HTTPS)</span></a>
+  <div class="kb" id="kb"><span class="ms">keyboard</span><span>Type anywhere to send text</span></div>
+  <div class="card" id="info"></div>
+ </div>
+</div>
+<div id="snack"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const vid=$('vid'),img=$('img'),scr=$('scr'),cv=$('cv'),cx=cv.getContext('2d');
+let ws,retry=0,timer,info={},q=localStorage.q||'auto',sent='',frames=0,bytes=0,lastJpg=null;
+const snack=m=>{const s=$('snack');s.textContent=m;s.classList.add('show');clearTimeout(s._h);s._h=setTimeout(()=>s.classList.remove('show'),2500)};
+const send=m=>{if(ws&&ws.readyState==1)ws.send(m)};
+const a=x=>send('a:'+x);
+
+/* ================= Minimal H.264 -> fragmented MP4 muxer for MSE ================= */
+const U=a=>new Uint8Array(a),u32=n=>[n>>>24&255,n>>>16&255,n>>>8&255,n&255],str=s=>[...s].map(c=>c.charCodeAt(0)),Z=n=>new Array(n).fill(0);
+function cat(parts){let n=0;for(const p of parts)n+=p.length;const o=new Uint8Array(n);let i=0;for(const p of parts){o.set(p,i);i+=p.length}return o}
+function box(t,...p){const b=cat(p),o=new Uint8Array(b.length+8);o.set(u32(b.length+8));o.set(str(t),4);o.set(b,8);return o}
+const MATRIX=[0,1,0,0,...Z(12),0,1,0,0,...Z(12),64,0,0,0];
+function nalus(d){const out=[];let s=-1;for(let i=0;i+2<d.length;i++){if(d[i]==0&&d[i+1]==0&&d[i+2]==1){if(s>=0){let e=i;while(e>s&&d[e-1]==0)e--;out.push(d.subarray(s,e))}s=i+3;i+=2}}if(s>=0)out.push(d.subarray(s));return out}
+function initSeg(sps,pps,w,h){
+ const avcC=box('avcC',U([1,sps[1],sps[2],sps[3],0xff,0xe1,sps.length>>8,sps.length&255,...sps,1,pps.length>>8,pps.length&255,...pps]));
+ const avc1=box('avc1',U([...Z(6),0,1,...Z(16),w>>8,w&255,h>>8,h&255,0,0x48,0,0,0,0x48,0,0,0,0,0,0,0,1,...Z(32),0,0x18,0xff,0xff]),avcC);
+ const stbl=box('stbl',box('stsd',U([0,0,0,0,0,0,0,1]),avc1),box('stts',U(Z(8))),box('stsc',U(Z(8))),box('stsz',U(Z(12))),box('stco',U(Z(8))));
+ const minf=box('minf',box('vmhd',U([0,0,0,1,...Z(8)])),box('dinf',box('dref',U([0,0,0,0,0,0,0,1]),box('url ',U([0,0,0,1])))),stbl);
+ const mdia=box('mdia',box('mdhd',U([...Z(12),...u32(1000),0,0,0,0,0x55,0xc4,0,0])),box('hdlr',U([...Z(8),...str('vide'),...Z(12),...str('vitRemote'),0])),minf);
+ const trak=box('trak',box('tkhd',U([0,0,0,7,...Z(8),0,0,0,1,...Z(20),...Z(4),...MATRIX,...u32(w*65536),...u32(h*65536)])),mdia);
+ const moov=box('moov',box('mvhd',U([...Z(12),...u32(1000),...Z(4),0,1,0,0,1,0,...Z(10),...MATRIX,...Z(24),255,255,255,255])),trak,
+  box('mvex',box('trex',U([0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,1,0,1]))));
+ return cat([box('ftyp',U([...str('isom'),0,0,2,0,...str('isom'),...str('iso2'),...str('avc1'),...str('mp41')])),moov]);
+}
+function fragment(seq,dts,dur,key,data){
+ const traf=box('traf',box('tfhd',U([0,2,0,0,0,0,0,1])),box('tfdt',U([1,0,0,0,...u32(Math.floor(dts/4294967296)),...u32(dts>>>0)])),
+  box('trun',U([0,0,7,1,0,0,0,1,...u32(108),...u32(dur),...u32(data.length),...(key?[2,0,0,0]:[1,1,0,0])])));
+ return cat([box('moof',box('mfhd',U([0,0,0,0,...u32(seq)])),traf),box('mdat',data)]);
+}
+
+/* ================= Video player (MSE, low-latency) ================= */
+const P={ms:null,sb:null,queue:[],ready:false,key:false,seq:1,dts:0,dur:1,last:0,w:0,h:0,arr:{}};
+if(vid.requestVideoFrameCallback){const cb=(now,m)=>{const k=Math.round(m.mediaTime*1000),t0=P.arr[k];if(t0){lat(m.expectedDisplayTime-t0);delete P.arr[k]}vid.requestVideoFrameCallback(cb)};vid.requestVideoFrameCallback(cb)}
+function hex(n){return n.toString(16).padStart(2,'0')}
+// WebCodecs (lowest latency) is only exposed on secure origins: localhost / https
+const WC={dec:null,csd:null,key:false,ts:0,arr:new Map()};
+let latSum=0,latN=0;const lat=v=>{if(v>=0&&v<5000){latSum+=v;latN++}};
+function onConfig(d){
+ const w=d[1]<<8|d[2],h=d[3]<<8|d[4];let sps,pps;
+ for(const n of nalus(d.subarray(5))){const t=n[0]&31;if(t==7)sps=n;else if(t==8)pps=n}
+ if(!sps||!pps)return;
+ if(window.VideoDecoder){
+  try{WC.dec&&WC.dec.close()}catch(e){}
+  WC.csd=d.subarray(5).slice();WC.key=false;
+  WC.dec=new VideoDecoder({output:f=>{const t0=WC.arr.get(f.timestamp);if(t0){lat(performance.now()-t0);WC.arr.delete(f.timestamp)}if(cv.width!=f.displayWidth||cv.height!=f.displayHeight){cv.width=f.displayWidth;cv.height=f.displayHeight}cx.drawImage(f,0,0);f.close()},error:()=>{WC.dec=null}});
+  WC.dec.configure({codec:`avc1.${hex(sps[1])}${hex(sps[2])}${hex(sps[3])}`,optimizeForLatency:true});
+  return;
+ }
+ if(!window.MediaSource)return;
+ const mime=`video/mp4; codecs="avc1.${hex(sps[1])}${hex(sps[2])}${hex(sps[3])}"`;
+ if(!MediaSource.isTypeSupported(mime)){snack('Browser cannot play H.264');return}
+ Object.assign(P,{queue:[initSeg(sps,pps,w,h)],ready:false,key:false,seq:1,dts:0,w,h,arr:{}});
+ const ms=new MediaSource();P.ms=ms;
+ vid.src=URL.createObjectURL(ms);
+ ms.addEventListener('sourceopen',()=>{
+  if(P.ms!==ms)return;
+  URL.revokeObjectURL(vid.src);
+  P.sb=ms.addSourceBuffer(mime);P.sb.mode='segments';
+  P.sb.addEventListener('updateend',pumpSB);
+  P.ready=true;pumpSB();
+ },{once:true});
+}
+function onFrame(d){
+ const key=d[1]==1;
+ if(WC.dec){
+  if(!WC.key&&!key)return;
+  if(WC.dec.decodeQueueSize>8&&!key)return; // decoder behind: skip until it catches up
+  WC.key=true;
+  const data=key?cat([WC.csd,d.subarray(2)]):d.subarray(2);
+  const ts=(WC.ts+=16666);WC.arr.set(ts,performance.now());if(WC.arr.size>300)WC.arr.clear();
+  WC.dec.decode(new EncodedVideoChunk({type:key?'key':'delta',timestamp:ts,data}));
+  frames++;bytes+=d.length;showMode('canvas');return;
+ }
+ if(!P.ms||(!P.key&&!key))return;
+ P.key=true;
+ const parts=[];
+ for(const n of nalus(d.subarray(2))){const t=n[0]&31;if(t==7||t==8||t==9)continue;parts.push(U(u32(n.length)),n)}
+ if(!parts.length)return;
+ // Each frame gets a short duration so playback waits at the live edge instead of building a buffer
+ P.arr[P.dts]=performance.now();if(P.dts%600==0)for(const k in P.arr)if(k<P.dts-600)delete P.arr[k];
+ P.queue.push(fragment(P.seq++,P.dts,P.dur,key,cat(parts)));P.dts+=P.dur;
+ frames++;bytes+=d.length;pumpSB();
+ showMode('video');
+}
+function pumpSB(){
+ const sb=P.sb;if(!P.ready||!sb||sb.updating||!P.queue.length)return;
+ try{
+  // Trim old data now and then to keep memory flat
+  if(vid.buffered.length&&vid.currentTime-vid.buffered.start(0)>20&&P.queue.length<3){sb.remove(0,vid.currentTime-5);return}
+  sb.appendBuffer(P.queue.shift());
+ }catch(e){P.queue=[]}
+}
+// Keep the playhead at the live edge: catch up by playing slightly faster; only seek when far
+// behind (a seek flushes the decoder, so it must stay rare)
+setInterval(()=>{
+ if(!vid.buffered.length)return;
+ const lag=vid.buffered.end(vid.buffered.length-1)-vid.currentTime;
+ if(lag>0.3){vid.currentTime=vid.buffered.end(vid.buffered.length-1);return}
+ const r=lag>0.02?2:1;if(vid.playbackRate!=r)vid.playbackRate=r;
+ if(vid.paused)vid.play().catch(()=>{});
+},50);
+
+function showMode(m){
+ if(showMode.m==m)return;showMode.m=m;
+ vid.style.display=m=='video'?'block':'none';cv.style.display=m=='canvas'?'block':'none';img.style.display=m=='jpeg'?'block':'none';$('ph').style.display=m?'none':'flex';
+}
+function onJpeg(d){
+ const u=URL.createObjectURL(new Blob([d.subarray(1)],{type:'image/jpeg'}));
+ img.onload=()=>{if(lastJpg&&lastJpg!=u)URL.revokeObjectURL(lastJpg);lastJpg=u};img.src=u;
+ frames++;bytes+=d.length;showMode('jpeg');
+}
+
+/* ================= Connection ================= */
+const RELAY_MODE=new URLSearchParams(location.search).get('relay')==='1';
+const RELAY_ENDPOINT='https://YOUR-WORKER.workers.dev';
+const RELAY_SECRET='REPLACE_WITH_LONG_RANDOM_SECRET_32_CHARS_MIN';
+function login(){const p=$('pin').value.trim();if(!p)return;localStorage.pin=p;retry=0;connect()}
+$('pin').addEventListener('keydown',e=>{e.stopPropagation();if(e.key=='Enter')login()});
+function connect(){
+ const pin=localStorage.pin;if(!pin)return;
+ ws=RELAY_MODE?new WebSocket(`${RELAY_ENDPOINT.replace(/^https:/,'wss:')}/room/${encodeURIComponent(pin)}?role=viewer&token=${encodeURIComponent(RELAY_SECRET)}`):new WebSocket(`${location.protocol=='https:'?'wss':'ws'}://${location.host}/ws?k=${encodeURIComponent(pin)}`);
+ ws.binaryType='arraybuffer';let opened=false;
+ ws.onopen=()=>{opened=true;retry=0;$('login').style.display='none';setSt(1);sent='';stream();
+  clearInterval(timer);timer=setInterval(()=>{if(!document.hidden)send('i')},4000)};
+ ws.onclose=()=>{setSt(0);clearInterval(timer);
+  if(!opened&&retry==0){$('login').style.display='flex';$('lerr').textContent='Wrong PIN or phone unreachable';retry=1;return}
+  setTimeout(connect,Math.min(5000,500*++retry))};
+ ws.onmessage=e=>{
+  if(typeof e.data!='string'){
+   const d=new Uint8Array(e.data);
+   if(d[0]==4)onFrame(d);else if(d[0]==3)onConfig(d);else if(d[0]==1)onJpeg(d);else if(d[0]==2)download(new Blob([d.subarray(1)],{type:'image/jpeg'}),'jpg');
+   return}
+  const m=JSON.parse(e.data);
+  if(m.t=='info')showInfo(m);else if(m.t=='err'||m.t=='ok')snack(m.m)};
+}
+function setSt(on){$('dot').style.background=on?'var(--ok)':'var(--error)';$('stt').textContent=on?'Online':'Offline';
+ if(!on){showMode('');$('phTxt').textContent='Reconnecting…'}else $('phTxt').textContent='Starting stream…'}
+
+/* ================= Quality ================= */
+const Q={low:[480,1000,60],med:[720,2500,60],high:[1080,5000,60]};
+function stream(){
+ let p;
+ if(document.hidden)p=[0,0,0];
+ else if(q=='auto')p=[480,1500,60]; // latency first: smallest frames encode/decode fastest
+ else p=Q[q];
+ const s='V:'+p.join(',');if(s!=sent){sent=s;send(s)}
+}
+function setQ(v){q=v;localStorage.q=v;document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.q==q));stream()}
+document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>setQ(b.dataset.q));setQ(q);
+addEventListener('resize',()=>{clearTimeout(stream._t);stream._t=setTimeout(stream,300)});
+document.addEventListener('visibilitychange',stream);
+setInterval(()=>{if(showMode.m)$('stat').textContent=frames?`${frames} fps · ${(bytes/1024).toFixed(0)} KB/s`+(latN?` · ${Math.round(latSum/latN)} ms`:''):'Live · idle';frames=0;bytes=0;latSum=latN=0},1000);
+
+/* ================= Touch ================= */
+const cur=()=>showMode.m=='jpeg'?img:showMode.m=='canvas'?cv:vid;
+function pos(e){
+ const el=cur(),nw=el.videoWidth||el.naturalWidth||el.width||1,nh=el.videoHeight||el.naturalHeight||el.height||1,r=scr.getBoundingClientRect(),
+  s=Math.min(r.width/nw,r.height/nh),w=nw*s,h=nh*s,l=r.left+(r.width-w)/2,t=r.top+(r.height-h)/2;
+ return[Math.round(Math.min(1,Math.max(0,(e.clientX-l)/w))*1e4),Math.round(Math.min(1,Math.max(0,(e.clientY-t)/h))*1e4),e.clientX,e.clientY]}
+let down=null,mv=null,raf=0,wheelT=0;
+scr.addEventListener('pointerdown',e=>{if(e.button)return;e.preventDefault();scr.setPointerCapture(e.pointerId);const p=pos(e);down=[...p,performance.now()];
+ if(info.touch)send(`d:${p[0]},${p[1]}`)});
+scr.addEventListener('pointermove',e=>{if(!down||!info.touch)return;mv=pos(e);
+ send(`m:${mv[0]},${mv[1]}`)});
+scr.addEventListener('pointerup',e=>{if(!down)return;const p=pos(e);
+ if(info.touch)send(`u:${p[0]},${p[1]}`);
+ else{const dt=Math.round(performance.now()-down[4]),moved=Math.hypot(p[2]-down[2],p[3]-down[3])>8;
+  if(!moved)send(dt>450?`l:${down[0]},${down[1]}`:`t:${down[0]},${down[1]}`);
+  else send(`s:${down[0]},${down[1]},${p[0]},${p[1]},${Math.min(2000,Math.max(80,dt))}`)}
+ down=null;mv=null});
+scr.addEventListener('pointercancel',e=>{if(down&&info.touch){const p=pos(e);send(`u:${p[0]},${p[1]}`)}down=null});
+scr.addEventListener('wheel',e=>{e.preventDefault();const n=performance.now();if(n-wheelT<250)return;wheelT=n;const p=pos(e),d=e.deltaY>0?-2000:2000;
+ send(`s:${p[0]},${p[1]},${p[0]},${Math.min(9500,Math.max(500,p[1]+d))},200`)},{passive:false});
+scr.addEventListener('contextmenu',e=>{e.preventDefault();a('back')});
+
+/* ================= Keys ================= */
+(()=>{const b=$('pw');let t0=null,rq,fired;
+ const loop=()=>{const p=Math.min(1,(performance.now()-t0)/600);b.style.setProperty('--p',p*100+'%');if(p>=1&&!fired){fired=true;a('power')}if(!fired)rq=requestAnimationFrame(loop)};
+ b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);t0=performance.now();fired=false;b.classList.add('held');loop()};
+ const reset=()=>{cancelAnimationFrame(rq);b.classList.remove('held');b.style.setProperty('--p','0%');t0=null};
+ b.onpointerup=()=>{if(t0==null)return;if(!fired)send('P');reset()};b.onpointercancel=reset;
+})();
+for(const[id,cmd]of[['vu','v:up'],['vd','v:down']]){const b=$(id);let t;
+ b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);send(cmd);t=setTimeout(function r(){send(cmd);t=setTimeout(r,150)},450)};
+ b.onpointerup=b.onpointercancel=()=>clearTimeout(t)}
+document.addEventListener('keydown',e=>{
+ if($('login').style.display!='none'||e.ctrlKey||e.metaKey||e.altKey)return;
+ let m=null;
+ if(e.key=='Escape')m='a:back';else if(e.key=='Backspace')m='b';else if(e.key=='Enter')m='e';else if(e.key.length==1)m='x:'+e.key;
+ if(m){e.preventDefault();send(m);flash()}});
+document.addEventListener('paste',e=>{const t=e.clipboardData.getData('text');if(t){e.preventDefault();send('x:'+t);flash()}});
+const flash=()=>{const k=$('kb');k.classList.add('on');clearTimeout(k._t);k._t=setTimeout(()=>k.classList.remove('on'),300)};
+
+function download(blob,ext){const u=URL.createObjectURL(blob),l=document.createElement('a');l.href=u;l.download='screenshot_'+new Date().toISOString().replace(/[:.]/g,'-')+'.'+ext;l.click();setTimeout(()=>URL.revokeObjectURL(u),5000);snack('Screenshot saved')}
+function shot(){
+ if(info.sdk>=30)return send('c'); // full resolution from the phone
+ const el=cur(),w=el.videoWidth||el.naturalWidth||el.width,h=el.videoHeight||el.naturalHeight||el.height;if(!w)return;
+ const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(el,0,0);c.toBlob(b=>download(b,'png'),'image/png');
+}
+
+/* ================= Info ================= */
+const fb=n=>n>=1e9?(n/1e9).toFixed(1)+' GB':(n/1e6).toFixed(0)+' MB';
+const ft=s=>{const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;return(d?d+'d ':'')+h+'h '+m+'m'};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function showInfo(d){
+ const prev=info;info=d;
+ if(d.w&&d.h)scr.style.aspectRatio=`${d.w}/${d.h}`;
+ if(prev.video!=null&&prev.video!=d.video){sent='';showMode('')}
+ const ru=d.ramTotal-d.ramAvail,du=d.diskTotal-d.diskFree;
+ const it=(ic,label,val,p)=>`<div class="li"><span class="ms">${ic}</span><div><small>${label}</small><b title="${esc(val)}">${esc(val)}</b>${p!=null?`<div class="prog"><i style="width:${Math.round(p)}%"></i></div>`:''}</div></div>`;
+ $('info').innerHTML=[
+  it('smartphone','Device',d.model),
+  it('android','Android',`${d.android} · API ${d.sdk}`),
+  it(d.charging?'battery_charging_full':'battery_full','Battery',`${d.battery}%${d.charging?' · charging':''} · ${d.batTemp}°C`,d.battery),
+  it('memory_alt','RAM',`${fb(ru)} / ${fb(d.ramTotal)}`,ru/d.ramTotal*100),
+  it('hard_drive','Storage',`${fb(du)} / ${fb(d.diskTotal)}`,du/d.diskTotal*100),
+  it('volume_up','Volume',`${d.vol}/${d.volMax}`,d.vol/d.volMax*100),
+  it('wifi','IP',d.ip),
+  it('schedule','Uptime',ft(d.uptime)),
+  it('videocam','Stream',d.capture+(d.video?` · encode ${d.encMs} ms`:'')),
+ ].join('');
+ stream();
+}
+if(!window.VideoDecoder&&location.protocol=='http:'){const f=$('fast');f.href='https://'+location.hostname+':'+((+location.port||80)+1)+'/';f.style.display='flex';f.title='Accept the certificate warning once: enables WebCodecs, the lowest-latency video decoder'}
+if(localStorage.pin)connect();
+</script>
+</body>
+</html>

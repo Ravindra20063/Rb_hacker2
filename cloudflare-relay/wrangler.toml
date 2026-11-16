@@ -1,0 +1,18 @@
+name = "vitremote-relay"
+main = "src/index.ts"
+compatibility_date = "2026-11-16"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+[vars]
+# Set PAIRING_SECRET with: npx wrangler secret put PAIRING_SECRET
+
+[assets]
+directory = "./public"
+binding = "ASSETS"

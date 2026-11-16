@@ -1,0 +1,505 @@
+package com.vvtool.vitremote
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Path
+import android.media.AudioManager
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
+import android.view.Display
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import java.io.ByteArrayOutputStream
+import java.util.zip.CRC32
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
+import java.util.concurrent.TimeUnit
+
+class RemoteService : AccessibilityService(), WebServer.Listener {
+
+    companion object {
+        @Volatile var instance: RemoteService? = null
+            private set
+        @Volatile var lastError: String? = null
+
+        /** First byte is the type: 1 = live frame, 2 = full screenshot. Rest is JPEG. */
+        fun jpeg(b: Bitmap, q: Int, type: Int): ByteArray {
+            val bo = ByteArrayOutputStream(64 * 1024)
+            bo.write(type)
+            b.compress(Bitmap.CompressFormat.JPEG, q, bo)
+            return bo.toByteArray()
+        }
+    }
+
+    private var server: WebServer? = null
+    private var relayWs: WebSocket? = null
+    private var relayClient: WebServer.Client? = null
+    @Volatile private var serviceAlive = true
+    private val relayHttp = OkHttpClient.Builder().pingInterval(25, TimeUnit.SECONDS).
+        connectTimeout(15, TimeUnit.SECONDS).readTimeout(0, TimeUnit.MILLISECONDS).build()
+    private lateinit var prefs: Prefs
+    private val main = Handler(Looper.getMainLooper())
+    private val capThread = HandlerThread("vit-cap").apply { start() }
+    private val cap = Handler(capThread.looper)
+
+    // Typing state: the node's text can lag behind fast keystrokes, so build on what we last set
+    private var typedText: String? = null
+    private var typedAt = 0L
+    @Volatile private var lastLive: ByteArray? = null
+    private var lastConsentAsk = 0L
+    private val startedAt = SystemClock.elapsedRealtime()
+
+    // Accessibility screenshot loop state (only touched on the cap thread)
+    private var capturing = false
+    private val fullWaiters = ArrayList<WebServer.Client>()
+
+    val running get() = server != null
+    val clientCount get() = server?.clients?.size ?: 0
+
+    override fun onServiceConnected() {
+        instance = this
+        prefs = Prefs(this)
+        applyConfig()
+    }
+
+    override fun onAccessibilityEvent(e: AccessibilityEvent?) {}
+
+    override fun onInterrupt() {}
+
+    override fun onDestroy() {
+        serviceAlive = false
+        stopServer()
+        capThread.quitSafely()
+        main.removeCallbacksAndMessages(null)
+        // On rebind the new instance may be assigned before the old one is destroyed
+        if (instance === this) instance = null
+        super.onDestroy()
+    }
+
+    /** Start/stop/restart the server according to the current settings. */
+    fun applyConfig(attempt: Int = 0) {
+        main.removeCallbacksAndMessages(null)
+        stopServer()
+        if (!prefs.enabled) return
+        try {
+            val html = assets.open("index.html").use { it.readBytes() }
+            server = WebServer(prefs.port, prefs.pin, html, this).also { it.start() }
+            if (RelayConfig.ENABLED) connectRelay()
+            lastError = null
+        } catch (e: Exception) {
+            server = null
+            lastError = "Cannot open port ${prefs.port}: ${e.message}"
+            // The old instance may still hold the port for a moment => retry
+            if (attempt < 5) main.postDelayed({ applyConfig(attempt + 1) }, 1000)
+        }
+    }
+
+    private fun stopServer() {
+        server?.stop()
+        server = null
+        relayWs?.cancel()
+        relayWs = null
+        relayClient?.close()
+        relayClient = null
+    }
+
+    /** Persistent device-side relay tunnel; reconnects automatically after network changes. */
+    private fun connectRelay() {
+        if (!RelayConfig.ENABLED || !serviceAlive) return
+        val base = RelayConfig.RELAY_URL.trim().removeSuffix("/")
+        val secret = RelayConfig.PAIRING_SECRET
+        if (!base.startsWith("https://") || base.contains("YOUR-WORKER") || secret.length < 32 || secret.startsWith("REPLACE_")) {
+            lastError = "Cloudflare relay is not configured in RelayConfig.kt"
+            return
+        }
+        val room = prefs.pin
+        val wsUrl = base.replaceFirst("https://", "wss://") + "/room/$room?role=device&token=" + java.net.URLEncoder.encode(secret, "UTF-8")
+        val req = Request.Builder().url(wsUrl).build()
+        relayWs = relayHttp.newWebSocket(req, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                relayWs = webSocket
+                val c = WebServer.Client("cloudflare:$room", { op, data ->
+                    if (op == 0x1) webSocket.send(String(data, Charsets.UTF_8))
+                    else if (op == 0x2) webSocket.send(ByteString.of(data, 0, data.size))
+                }, { webSocket.close(1000, "client closed") })
+                relayClient = c
+                onOpen(c)
+            }
+            override fun onMessage(webSocket: WebSocket, text: String) { relayClient?.let { onText(it, text) } }
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) { /* Viewer-to-device binary messages are not used. */ }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                val c = relayClient; relayClient = null; relayWs = null
+                if (c != null) onClose(c)
+                scheduleRelayReconnect()
+            }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                val c = relayClient; relayClient = null; relayWs = null
+                if (c != null) onClose(c)
+                scheduleRelayReconnect()
+            }
+        })
+    }
+
+    private fun scheduleRelayReconnect() {
+        if (prefs.enabled && serviceAlive) main.postDelayed({ if (prefs.enabled && serviceAlive && relayWs == null) connectRelay() }, 5000)
+    }
+
+    // ================= WebSocket =================
+
+    override fun onOpen(c: WebServer.Client) {
+        c.send(info())
+    }
+
+    override fun onClose(c: WebServer.Client) {
+        cap.post { fullWaiters.remove(c) }
+        updateCapture()
+    }
+
+    override fun onText(c: WebServer.Client, msg: String) {
+        if (msg.isEmpty()) return
+        val arg = if (msg.length > 2) msg.substring(2) else ""
+        try {
+            if (msg[0] in "atlse") typedText = null // focus/content may change
+            when (msg[0]) {
+                'a' -> globalAct(c, arg)
+                't' -> { val p = nums(arg); gesture(p[0], p[1], p[0], p[1], 40) }
+                'l' -> { val p = nums(arg); gesture(p[0], p[1], p[0], p[1], 700) }
+                's' -> { val p = nums(arg); gesture(p[0], p[1], p[2], p[3], p.getOrElse(4) { 250 }) }
+                'v' -> volume(arg)
+                'x' -> type(c) { it + msg.substring(2) }
+                'b' -> type(c) { if (it.isEmpty()) it else it.substring(0, it.offsetByCodePoints(it.length, -1)) }
+                'P' -> powerKey()
+                'e' -> imeEnter(c)
+                'i' -> c.send(info())
+                'c' -> requestFull(c)
+                'd' -> { val p = nums(arg); touch(0, p[0], p[1]) }
+                'm' -> { val p = nums(arg); touch(1, p[0], p[1]) }
+                'u' -> { val p = nums(arg); touch(2, p[0], p[1]) }
+                'V' -> {
+                    // V:width,kbps,fps  (width 0 = stop)
+                    val p = arg.split(',').map { it.trim().toIntOrNull() ?: 0 }
+                    val was = c.liveWidth
+                    c.liveWidth = p.getOrElse(0) { 0 }.coerceIn(0, 1440)
+                    c.kbps = p.getOrElse(1) { 2000 }.coerceIn(200, 20000)
+                    c.fps = p.getOrElse(2) { 30 }.coerceIn(5, 60)
+                    c.lastFrameCrc = 0
+                    if (c.liveWidth > 0 && was == 0) {
+                        consentAsked = false
+                        val cs = CaptureService.instance
+                        val cfg = cs?.config
+                        if (cfg != null) { c.queueVideo(cfg, false, true); cs.requestKeyFrame() }
+                        else lastLive?.let { c.sendBin(it) } // last JPEG frame for a static screen
+                    }
+                    updateCapture()
+                }
+                'p' -> c.send("{\"t\":\"pong\"}")
+            }
+        } catch (e: Exception) {
+            err(c, e.message ?: e.toString())
+        }
+    }
+
+    private fun nums(s: String) = s.split(',').map { it.trim().toInt() }
+
+    private fun err(c: WebServer.Client, m: String) = c.send(DeviceInfo.toJson(mapOf("t" to "err", "m" to m)))
+
+    fun notifyAll(type: String, m: String) {
+        val s = DeviceInfo.toJson(mapOf("t" to type, "m" to m))
+        server?.clients?.forEach { it.send(s) }
+    }
+
+    private fun captureMode() = when {
+        CaptureService.instance != null -> "H.264 video"
+        Build.VERSION.SDK_INT >= 30 -> "JPEG (enable Screen capture for video)"
+        else -> "Needs Screen capture permission"
+    }
+
+    private fun info(): String {
+        val sz = DeviceInfo.screenSize(this)
+        return DeviceInfo.json(
+            this, mapOf(
+                "clients" to clientCount,
+                "svcUptime" to (SystemClock.elapsedRealtime() - startedAt) / 1000,
+                "capture" to captureMode(),
+                "video" to (CaptureService.instance != null),
+                "encMs" to (CaptureService.instance?.encMs?.toInt() ?: 0),
+                "touch" to (Build.VERSION.SDK_INT >= 26),
+                "w" to sz.x, "h" to sz.y,
+                "ver" to (try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Exception) { "" })
+            )
+        )
+    }
+
+    // ================= Actions =================
+
+    private fun globalAct(c: WebServer.Client, a: String) {
+        val id = when (a) {
+            "back" -> GLOBAL_ACTION_BACK
+            "home" -> GLOBAL_ACTION_HOME
+            "recents" -> GLOBAL_ACTION_RECENTS
+            "notif" -> GLOBAL_ACTION_NOTIFICATIONS
+            "qs" -> GLOBAL_ACTION_QUICK_SETTINGS
+            "power" -> GLOBAL_ACTION_POWER_DIALOG
+            "lock" -> if (Build.VERSION.SDK_INT >= 28) GLOBAL_ACTION_LOCK_SCREEN else -1
+            "shot" -> if (Build.VERSION.SDK_INT >= 28) GLOBAL_ACTION_TAKE_SCREENSHOT else -1
+            else -> -1
+        }
+        if (id < 0 || !performGlobalAction(id)) err(c, "Not supported on this device: $a")
+    }
+
+    /** Coordinates are on a 0..10000 scale of the screen width/height. */
+    private fun gesture(x1: Int, y1: Int, x2: Int, y2: Int, ms: Int) {
+        val sz = DeviceInfo.screenSize(this)
+        fun fx(v: Int) = (v.coerceIn(0, 10000) * (sz.x - 1) / 10000f)
+        fun fy(v: Int) = (v.coerceIn(0, 10000) * (sz.y - 1) / 10000f)
+        val path = Path().apply { moveTo(fx(x1), fy(y1)); lineTo(fx(x2), fy(y2)) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, ms.coerceIn(1, 5000).toLong())
+        dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    }
+
+    private fun volume(a: String) {
+        val dir = when (a) {
+            "up" -> AudioManager.ADJUST_RAISE
+            "down" -> AudioManager.ADJUST_LOWER
+            "mute" -> AudioManager.ADJUST_TOGGLE_MUTE
+            else -> return
+        }
+        (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+            .adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, AudioManager.FLAG_SHOW_UI)
+    }
+
+    private fun focusedInput(): AccessibilityNodeInfo? =
+        rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+
+    private fun type(c: WebServer.Client, edit: (String) -> String) {
+        val n = focusedInput()
+        if (n == null || !n.isEditable) return err(c, "Tap a text field on the phone first")
+        val hint = Build.VERSION.SDK_INT >= 26 && n.isShowingHintText
+        val now = SystemClock.uptimeMillis()
+        val cur = typedText?.takeIf { now - typedAt < 1500 } ?: if (hint) "" else n.text?.toString() ?: ""
+        val next = edit(cur)
+        val b = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, next)
+        }
+        if (n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b)) {
+            typedText = next; typedAt = now
+            if (Build.VERSION.SDK_INT >= 18) {
+                n.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, Bundle().apply {
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, next.length)
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, next.length)
+                })
+            }
+        } else err(c, "Could not type into this field")
+    }
+
+    /** Short press of the power key: screen on => lock, screen off => wake. */
+    @Suppress("DEPRECATION")
+    private fun powerKey() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (pm.isInteractive) {
+            val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
+            when {
+                Build.VERSION.SDK_INT >= 28 -> performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+                dpm.isAdminActive(android.content.ComponentName(this, AdminReceiver::class.java)) -> dpm.lockNow()
+                else -> {
+                    performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)
+                    notifyAll("err", "Enable \"Screen lock\" in the vitRemote app to turn the screen off")
+                }
+            }
+        } else {
+            pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "vit:wake")
+                .acquire(1000)
+        }
+    }
+
+    private fun imeEnter(c: WebServer.Client) {
+        val n = focusedInput() ?: return err(c, "Tap a text field on the phone first")
+        if (Build.VERSION.SDK_INT >= 30) {
+            n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        } else err(c, "Enter key requires Android 11+")
+    }
+
+    // ================= Screen capture =================
+
+    private fun jpegLive() = CaptureService.instance == null && liveClients().isNotEmpty()
+
+    private fun liveClients() = server?.clients?.filter { it.liveWidth > 0 } ?: emptyList()
+
+    /** Called when MediaProjection starts or stops. */
+    fun onCaptureChanged() {
+        lastLive = null
+        updateCapture()
+        server?.clients?.forEach { it.send(info()) }
+    }
+
+    /** Pick the capture backend and the stream size from current viewers. */
+    private fun updateCapture() {
+        val best = liveClients().maxByOrNull { it.liveWidth }
+        val cs = CaptureService.instance
+        when {
+            cs != null -> cs.setStream(best?.liveWidth ?: 0, best?.kbps ?: 2000, best?.fps ?: 30)
+            best == null -> {}
+            else -> {
+                if (!consentAsked) { consentAsked = true; askConsent() }
+                if (Build.VERSION.SDK_INT >= 30) cap.post { capture() } // JPEG until video is allowed
+            }
+        }
+    }
+
+    @Volatile private var consentAsked = false
+    @Volatile private var lastKeyReq = 0L
+
+    fun broadcastConfig(msg: ByteArray) {
+        liveClients().forEach { it.queueVideo(msg, false, true) }
+    }
+
+    fun broadcastVideo(msg: ByteArray, key: Boolean) {
+        var need = false
+        liveClients().forEach { if (!it.queueVideo(msg, key, false)) need = true }
+        val now = SystemClock.uptimeMillis()
+        if (need && now - lastKeyReq > 500) { lastKeyReq = now; CaptureService.instance?.requestKeyFrame() }
+    }
+
+    /** Opens the system screen-capture dialog on the phone (once per 15 s at most). */
+    private fun askConsent() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastConsentAsk < 15000) return
+        lastConsentAsk = now
+        notifyAll("ok", "Tap \"Start now\" on the phone to enable video streaming")
+        main.post {
+            startActivity(Intent(this, ProjectionActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    // ================= Real-time touch (Android 8+) =================
+    // The finger is streamed as continued gesture segments: each segment covers the points
+    // received while the previous one was running, so drags follow the mouse live.
+
+    private var gActive = false
+    private var gInFlight = false
+    private var gUp = false
+    private var gLastX = 0f
+    private var gLastY = 0f
+    private var gSegAt = 0L
+    private val gPending = ArrayList<Float>()
+    private var gStroke: GestureDescription.StrokeDescription? = null
+
+    private val gCallback = object : GestureResultCallback() {
+        override fun onCompleted(d: GestureDescription?) { gInFlight = false; pump() }
+        override fun onCancelled(d: GestureDescription?) { gInFlight = false; gActive = false }
+    }
+
+    private fun touch(kind: Int, x: Int, y: Int) = main.post {
+        if (Build.VERSION.SDK_INT < 26) return@post
+        val sz = DeviceInfo.screenSize(this)
+        val px = x.coerceIn(0, 10000) * (sz.x - 1) / 10000f
+        val py = y.coerceIn(0, 10000) * (sz.y - 1) / 10000f
+        if (kind == 0) {
+            gActive = true; gUp = false; gPending.clear()
+            gLastX = px; gLastY = py
+            val path = Path().apply { moveTo(px, py); lineTo(px, py) }
+            dispatchStroke(GestureDescription.StrokeDescription(path, 0, 1, true))
+        } else {
+            if (!gActive) return@post
+            gPending.add(px); gPending.add(py)
+            if (kind == 2) gUp = true
+            if (!gInFlight) pump()
+        }
+    }
+
+    private fun pump() {
+        if (Build.VERSION.SDK_INT < 26 || !gActive || (gPending.isEmpty() && !gUp)) return
+        val path = Path().apply { moveTo(gLastX, gLastY) }
+        if (gPending.isEmpty()) path.lineTo(gLastX, gLastY)
+        var i = 0
+        while (i < gPending.size) { path.lineTo(gPending[i], gPending[i + 1]); i += 2 }
+        if (gPending.isNotEmpty()) { gLastX = gPending[gPending.size - 2]; gLastY = gPending[gPending.size - 1] }
+        gPending.clear()
+        val dur = (SystemClock.uptimeMillis() - gSegAt).coerceIn(8, 200)
+        val s = gStroke!!.continueStroke(path, 0, dur, !gUp)
+        if (gUp) gActive = false
+        dispatchStroke(s)
+    }
+
+    private fun dispatchStroke(s: GestureDescription.StrokeDescription) {
+        gStroke = s
+        gInFlight = true
+        gSegAt = SystemClock.uptimeMillis()
+        if (!dispatchGesture(GestureDescription.Builder().addStroke(s).build(), gCallback, main)) {
+            gInFlight = false; gActive = false
+        }
+    }
+
+    fun broadcastLive(data: ByteArray) {
+        lastLive = data
+        val crc = CRC32().apply { update(data) }.value
+        // Unchanged frame => send nothing
+        liveClients().forEach { if (it.lastFrameCrc != crc) { it.lastFrameCrc = crc; it.sendBin(data) } }
+    }
+
+    /** Full-resolution screenshot (Android 11+). Older versions save the video frame in the browser. */
+    private fun requestFull(c: WebServer.Client) {
+        if (Build.VERSION.SDK_INT >= 30) cap.post { if (c !in fullWaiters) fullWaiters.add(c); capture() }
+        else err(c, "Full screenshots require Android 11+")
+    }
+
+    /** Accessibility screenshot loop (Android 11+, ~3 fps). Runs on the cap thread. */
+    private fun capture() {
+        if (capturing || Build.VERSION.SDK_INT < 30) return
+        if (fullWaiters.isEmpty() && !jpegLive()) return
+        capturing = true
+        takeScreenshot(Display.DEFAULT_DISPLAY, { cap.post(it) }, object : TakeScreenshotCallback {
+            override fun onSuccess(res: ScreenshotResult) {
+                try { processShot(res) } catch (_: Throwable) {}
+                capturing = false
+                if (jpegLive() || fullWaiters.isNotEmpty()) cap.postDelayed({ capture() }, 340)
+            }
+
+            override fun onFailure(code: Int) {
+                capturing = false
+                if (code == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                    cap.postDelayed({ capture() }, 150)
+                } else {
+                    fullWaiters.forEach { err(it, "Screenshot failed (code $code), the app may block capture") }
+                    fullWaiters.clear()
+                    if (jpegLive()) cap.postDelayed({ capture() }, 1000)
+                }
+            }
+        })
+    }
+
+    private fun processShot(res: ScreenshotResult) {
+        val hb = res.hardwareBuffer
+        val hw = Bitmap.wrapHardwareBuffer(hb, res.colorSpace)
+        val bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
+        hb.close(); hw?.recycle()
+        if (bmp == null) return
+
+        if (fullWaiters.isNotEmpty()) {
+            val data = jpeg(bmp, 88, 2)
+            fullWaiters.forEach { it.sendBin(data) }
+            fullWaiters.clear()
+        }
+        val w = if (jpegLive()) liveClients().maxOf { it.liveWidth } else 0
+        if (w > 0) {
+            val tw = minOf(w, bmp.width)
+            val scaled = if (tw == bmp.width) bmp
+            else Bitmap.createScaledBitmap(bmp, tw, bmp.height * tw / bmp.width, true)
+            broadcastLive(jpeg(scaled, 55, 1))
+            if (scaled !== bmp) scaled.recycle()
+        }
+        bmp.recycle()
+    }
+}
