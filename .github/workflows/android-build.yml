@@ -25,6 +25,9 @@ jobs:
         with:
           packages: platform-tools
 
+      - name: Fix Gradle Permission
+        run: chmod +x gradlew
+
       - name: Build release APK
         run: ./gradlew assembleRelease
 
