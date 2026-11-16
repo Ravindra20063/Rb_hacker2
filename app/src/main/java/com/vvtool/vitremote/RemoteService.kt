@@ -25,6 +25,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.ByteString.Companion.toByteString
 import java.util.concurrent.TimeUnit
 
 class RemoteService : AccessibilityService(), WebServer.Listener {
@@ -132,7 +133,7 @@ class RemoteService : AccessibilityService(), WebServer.Listener {
                 relayWs = webSocket
                 val c = WebServer.Client("cloudflare:$room", { op, data ->
                     if (op == 0x1) webSocket.send(String(data, Charsets.UTF_8))
-                    else if (op == 0x2) webSocket.send(ByteString.of(data, 0, data.size))
+                    else if (op == 0x2) webSocket.send(data.toByteString())
                 }, { webSocket.close(1000, "client closed") })
                 relayClient = c
                 onOpen(c)
