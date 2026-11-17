@@ -19,3 +19,6 @@ Validation:
 Important:
 - Cloudflare Worker must already be deployed with the same PAIRING_SECRET configured on
   the Worker and in RelayConfig.kt / viewer HTML. Do not share that secret publicly.
+
+
+Relay video fix (2026-11-17): RemoteService.liveClients() now includes relayClient as well as direct WebServer clients. This allows Cloudflare-connected viewers to trigger MediaProjection/encoder startup and receive H.264 config and frames. Not built or device-tested in this environment.

@@ -337,7 +337,13 @@ class RemoteService : AccessibilityService(), WebServer.Listener {
 
     private fun jpegLive() = CaptureService.instance == null && liveClients().isNotEmpty()
 
-    private fun liveClients() = server?.clients?.filter { it.liveWidth > 0 } ?: emptyList()
+    // Include the Cloudflare relay viewer as well as direct WebSocket viewers.
+    // Relay clients are not stored in WebServer.clients, but they must receive
+    // the same video configuration and encoded frames as local viewers.
+    private fun liveClients(): List<WebServer.Client> =
+        (server?.clients.orEmpty().toList() + listOfNotNull(relayClient))
+            .distinct()
+            .filter { it.liveWidth > 0 }
 
     /** Called when MediaProjection starts or stops. */
     fun onCaptureChanged() {
