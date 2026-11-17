@@ -26,6 +26,9 @@ export class Room {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const role = url.searchParams.get("role");
+    if (role === "viewer" && (!this.device || this.device.readyState !== WebSocket.OPEN)) {
+      return new Response("Device offline: open vitRemote on the phone first", { status: 503 });
+    }
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
     server.accept();

@@ -212,7 +212,7 @@ function onJpeg(d){
 }
 
 /* ================= Connection ================= */
-const RELAY_MODE=new URLSearchParams(location.search).get('relay')==='1';
+const RELAY_MODE=true;
 const RELAY_ENDPOINT='https://vitremote-relay.bhatiravindara64.workers.dev';
 const RELAY_SECRET='00d64a41a58048d93a4219ffac9fbd5c259a7ee90eb0ae427746a2e2dc87323a';
 function login(){const p=$('pin').value.trim();if(!p)return;localStorage.pin=p;retry=0;connect()}
