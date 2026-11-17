@@ -76,29 +76,33 @@ class CaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Android 14+ requires the mediaProjection foreground service to be active
+        // before getMediaProjection() is called with the user's consent result.
         try {
             startForegroundCompat()
         } catch (e: Exception) {
-            android.util.Log.e("vitRemote", "Unable to enter foreground mode", e)
-            RemoteService.instance?.notifyAll("err", "Screen service foreground start failed: ${e.javaClass.simpleName}: ${e.message}")
+            android.util.Log.e("vitRemote", "CaptureService could not enter foreground", e)
+            RemoteService.instance?.notifyAll("err", "Screen service could not start: ${e.javaClass.simpleName}: ${e.message}")
             stopSelf(startId)
             return START_NOT_STICKY
         }
+
         val code = intent?.getIntExtra("code", 0) ?: 0
         @Suppress("DEPRECATION")
         val data = intent?.getParcelableExtra<Intent>("data")
         if (data == null) {
-            RemoteService.instance?.notifyAll("err", "Screen capture token missing. Turn Screen Share off and on again.")
+            RemoteService.instance?.notifyAll("err", "Screen capture permission result was missing. Turn Screen capture on again.")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
             return START_NOT_STICKY
         }
         if (projection != null) return START_NOT_STICKY
+
         val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val p = try {
             mpm.getMediaProjection(code, data)
         } catch (e: Exception) {
-            android.util.Log.e("vitRemote", "getMediaProjection failed", e)
+            android.util.Log.e("vitRemote", "getMediaProjection rejected the consent result", e)
             RemoteService.instance?.notifyAll("err", "Android rejected screen capture: ${e.javaClass.simpleName}: ${e.message}")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
@@ -110,9 +114,10 @@ class CaptureService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+
         p.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
-                android.util.Log.w("vitRemote", "MediaProjection was stopped by Android/user")
+                android.util.Log.w("vitRemote", "MediaProjection stopped by Android or the user")
                 h.post { release() }
                 stopSelf()
             }
@@ -123,9 +128,10 @@ class CaptureService : Service() {
             (getSystemService(DISPLAY_SERVICE) as DisplayManager).registerDisplayListener(displayListener, h)
             displayListenerRegistered = true
         } catch (e: Exception) {
-            android.util.Log.e("vitRemote", "Display listener registration failed", e)
-            RemoteService.instance?.notifyAll("err", "Screen capture display setup failed: ${e.message}")
+            android.util.Log.e("vitRemote", "Could not register display listener", e)
+            RemoteService.instance?.notifyAll("err", "Screen display setup failed: ${e.javaClass.simpleName}: ${e.message}")
             p.stop()
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -153,8 +159,11 @@ class CaptureService : Service() {
     override fun onDestroy() {
         instance = null
         if (displayListenerRegistered) {
-            try { (getSystemService(DISPLAY_SERVICE) as DisplayManager).unregisterDisplayListener(displayListener) }
-            catch (e: Exception) { android.util.Log.w("vitRemote", "Display listener cleanup failed", e) }
+            try {
+                (getSystemService(DISPLAY_SERVICE) as DisplayManager).unregisterDisplayListener(displayListener)
+            } catch (e: Exception) {
+                android.util.Log.w("vitRemote", "Display listener cleanup failed", e)
+            }
             displayListenerRegistered = false
         }
         h.post { release(); projection?.stop(); projection = null }

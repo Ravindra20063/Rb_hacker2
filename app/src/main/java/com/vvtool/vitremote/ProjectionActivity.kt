@@ -27,7 +27,7 @@ class ProjectionActivity : Activity() {
             } catch (e: Exception) {
                 android.util.Log.e("vitRemote", "Could not start screen capture service", e)
                 RemoteService.instance?.notifyAll("err", "Could not start screen capture: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
-                android.widget.Toast.makeText(this, "Screen capture start failed: ${e.message ?: e.javaClass.simpleName}", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(this, "Screen capture failed: ${e.message ?: e.javaClass.simpleName}", android.widget.Toast.LENGTH_LONG).show()
             }
         } else {
             RemoteService.instance?.notifyAll("err", "Screen capture was denied on the phone")
