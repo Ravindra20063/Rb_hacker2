@@ -22,3 +22,12 @@ Important:
 
 
 Relay video fix (2026-11-17): RemoteService.liveClients() now includes relayClient as well as direct WebServer clients. This allows Cloudflare-connected viewers to trigger MediaProjection/encoder startup and receive H.264 config and frames. Not built or device-tested in this environment.
+
+
+2026-11-17 - Screen capture lifecycle diagnostics/fix
+- Hardened ProjectionActivity result handling so service-start exceptions are logged and shown instead of silently returning to the app.
+- Hardened CaptureService foreground start and MediaProjection token handling with explicit error messages.
+- Guarded DisplayManager listener cleanup so service teardown cannot crash if registration did not complete.
+- Added MediaProjection stop logging.
+- No package name, signing configuration, or APK update/signing settings were changed.
+- Build/device runtime verification is still required.

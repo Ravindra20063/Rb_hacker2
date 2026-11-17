@@ -54,6 +54,7 @@ class CaptureService : Service() {
     private var display: VirtualDisplay? = null
     private var codec: MediaCodec? = null
     private var surface: Surface? = null
+    private var displayListenerRegistered = false
 
     // Requested stream (all accessed on h)
     private var wantW = 0
@@ -75,20 +76,59 @@ class CaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForegroundCompat()
+        try {
+            startForegroundCompat()
+        } catch (e: Exception) {
+            android.util.Log.e("vitRemote", "Unable to enter foreground mode", e)
+            RemoteService.instance?.notifyAll("err", "Screen service foreground start failed: ${e.javaClass.simpleName}: ${e.message}")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         val code = intent?.getIntExtra("code", 0) ?: 0
         @Suppress("DEPRECATION")
         val data = intent?.getParcelableExtra<Intent>("data")
-        if (data == null || projection != null) return START_NOT_STICKY
+        if (data == null) {
+            RemoteService.instance?.notifyAll("err", "Screen capture token missing. Turn Screen Share off and on again.")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        if (projection != null) return START_NOT_STICKY
         val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val p = try { mpm.getMediaProjection(code, data) } catch (_: Exception) { null }
-        if (p == null) { stopSelf(); return START_NOT_STICKY }
+        val p = try {
+            mpm.getMediaProjection(code, data)
+        } catch (e: Exception) {
+            android.util.Log.e("vitRemote", "getMediaProjection failed", e)
+            RemoteService.instance?.notifyAll("err", "Android rejected screen capture: ${e.javaClass.simpleName}: ${e.message}")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        if (p == null) {
+            RemoteService.instance?.notifyAll("err", "Android did not create a screen capture session")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         p.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() { h.post { release() }; stopSelf() }
+            override fun onStop() {
+                android.util.Log.w("vitRemote", "MediaProjection was stopped by Android/user")
+                h.post { release() }
+                stopSelf()
+            }
         }, h)
         projection = p
         instance = this
-        (getSystemService(DISPLAY_SERVICE) as DisplayManager).registerDisplayListener(displayListener, h)
+        try {
+            (getSystemService(DISPLAY_SERVICE) as DisplayManager).registerDisplayListener(displayListener, h)
+            displayListenerRegistered = true
+        } catch (e: Exception) {
+            android.util.Log.e("vitRemote", "Display listener registration failed", e)
+            RemoteService.instance?.notifyAll("err", "Screen capture display setup failed: ${e.message}")
+            p.stop()
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         RemoteService.instance?.onCaptureChanged()
         return START_NOT_STICKY
     }
@@ -112,7 +152,11 @@ class CaptureService : Service() {
 
     override fun onDestroy() {
         instance = null
-        (getSystemService(DISPLAY_SERVICE) as DisplayManager).unregisterDisplayListener(displayListener)
+        if (displayListenerRegistered) {
+            try { (getSystemService(DISPLAY_SERVICE) as DisplayManager).unregisterDisplayListener(displayListener) }
+            catch (e: Exception) { android.util.Log.w("vitRemote", "Display listener cleanup failed", e) }
+            displayListenerRegistered = false
+        }
         h.post { release(); projection?.stop(); projection = null }
         thread.quitSafely()
         RemoteService.instance?.onCaptureChanged()

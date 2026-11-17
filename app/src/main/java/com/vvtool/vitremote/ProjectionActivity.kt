@@ -21,8 +21,17 @@ class ProjectionActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode == RESULT_OK && data != null) CaptureService.start(this, resultCode, data)
-        else RemoteService.instance?.notifyAll("err", "Screen capture was denied on the phone")
+        if (resultCode == RESULT_OK && data != null) {
+            try {
+                CaptureService.start(this, resultCode, data)
+            } catch (e: Exception) {
+                android.util.Log.e("vitRemote", "Could not start screen capture service", e)
+                RemoteService.instance?.notifyAll("err", "Could not start screen capture: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
+                android.widget.Toast.makeText(this, "Screen capture start failed: ${e.message ?: e.javaClass.simpleName}", android.widget.Toast.LENGTH_LONG).show()
+            }
+        } else {
+            RemoteService.instance?.notifyAll("err", "Screen capture was denied on the phone")
+        }
         finish()
     }
 }
