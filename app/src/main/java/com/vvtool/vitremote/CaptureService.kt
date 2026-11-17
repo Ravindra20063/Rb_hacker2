@@ -194,7 +194,16 @@ class CaptureService : Service() {
             override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
                 val sps = format.getByteBuffer("csd-0") ?: return
                 val pps = format.getByteBuffer("csd-1") ?: return
-                setConfig(w, hh, bytes(sps) + bytes(pps))
+                // Some device encoders expose csd-0/csd-1 as raw NAL units,
+                // while others include Annex-B start codes. Normalize each
+                // parameter set separately so neither format is lost.
+                val spsAnnexB = SpsFix.annexB(bytes(sps))
+                val ppsAnnexB = SpsFix.annexB(bytes(pps))
+                if (spsAnnexB.isNotEmpty() && ppsAnnexB.isNotEmpty()) {
+                    setConfig(w, hh, spsAnnexB + ppsAnnexB)
+                } else {
+                    RemoteService.instance?.notifyAll("err", "Video encoder did not provide valid H.264 SPS/PPS")
+                }
             }
 
             override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {

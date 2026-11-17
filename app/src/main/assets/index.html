@@ -101,7 +101,7 @@ button:hover::after{opacity:.08}button:active::after,button.held::after{opacity:
 <script>
 const $=id=>document.getElementById(id);
 const vid=$('vid'),img=$('img'),scr=$('scr'),cv=$('cv'),cx=cv.getContext('2d');
-let ws,retry=0,timer,info={},q=localStorage.q||'auto',sent='',frames=0,bytes=0,lastJpg=null;
+let ws,retry=0,timer,streamWatchdog,gotVideoConfig=false,gotVideoFrame=false,info={},q=localStorage.q||'auto',sent='',frames=0,bytes=0,lastJpg=null;
 const snack=m=>{const s=$('snack');s.textContent=m;s.classList.add('show');clearTimeout(s._h);s._h=setTimeout(()=>s.classList.remove('show'),2500)};
 const send=m=>{if(ws&&ws.readyState==1)ws.send(m)};
 const a=x=>send('a:'+x);
@@ -136,32 +136,71 @@ function hex(n){return n.toString(16).padStart(2,'0')}
 // WebCodecs (lowest latency) is only exposed on secure origins: localhost / https
 const WC={dec:null,csd:null,key:false,ts:0,arr:new Map()};
 let latSum=0,latN=0;const lat=v=>{if(v>=0&&v<5000){latSum+=v;latN++}};
-function onConfig(d){
- const w=d[1]<<8|d[2],h=d[3]<<8|d[4];let sps,pps;
- for(const n of nalus(d.subarray(5))){const t=n[0]&31;if(t==7)sps=n;else if(t==8)pps=n}
- if(!sps||!pps)return;
- if(window.VideoDecoder){
-  try{WC.dec&&WC.dec.close()}catch(e){}
-  WC.csd=d.subarray(5).slice();WC.key=false;
-  WC.dec=new VideoDecoder({output:f=>{const t0=WC.arr.get(f.timestamp);if(t0){lat(performance.now()-t0);WC.arr.delete(f.timestamp)}if(cv.width!=f.displayWidth||cv.height!=f.displayHeight){cv.width=f.displayWidth;cv.height=f.displayHeight}cx.drawImage(f,0,0);f.close()},error:()=>{WC.dec=null}});
-  WC.dec.configure({codec:`avc1.${hex(sps[1])}${hex(sps[2])}${hex(sps[3])}`,optimizeForLatency:true});
-  return;
- }
- if(!window.MediaSource)return;
+let forceMse = false;
+let savedVideoConfig = null;
+function requestFreshKeyframe(){
+ // Restarting the requested stream forces the Android encoder to emit a new
+ // SPS/PPS + key frame, which lets the fallback decoder join cleanly.
+ const p = document.hidden ? [0,0,0] : (q === 'auto' ? [480,1500,60] : Q[q]);
+ send('V:0,0,0');
+ sent = '';
+ setTimeout(()=>{ sent=''; send('V:'+p.join(',')); },250);
+}
+function startMseDecoder(sps,pps,w,h){
+ if(!window.MediaSource)return false;
  const mime=`video/mp4; codecs="avc1.${hex(sps[1])}${hex(sps[2])}${hex(sps[3])}"`;
- if(!MediaSource.isTypeSupported(mime)){snack('Browser cannot play H.264');return}
+ if(!MediaSource.isTypeSupported(mime)){snack('This browser cannot play H.264 video');return false}
  Object.assign(P,{queue:[initSeg(sps,pps,w,h)],ready:false,key:false,seq:1,dts:0,w,h,arr:{}});
- const ms=new MediaSource();P.ms=ms;
- vid.src=URL.createObjectURL(ms);
+ const ms=new MediaSource();P.ms=ms;P.sb=null;
+ try { vid.src=URL.createObjectURL(ms); }
+ catch(e){ snack('Video player could not start'); return false; }
  ms.addEventListener('sourceopen',()=>{
   if(P.ms!==ms)return;
-  URL.revokeObjectURL(vid.src);
-  P.sb=ms.addSourceBuffer(mime);P.sb.mode='segments';
-  P.sb.addEventListener('updateend',pumpSB);
-  P.ready=true;pumpSB();
+  try{
+   P.sb=ms.addSourceBuffer(mime);P.sb.mode='segments';
+   P.sb.addEventListener('updateend',pumpSB);
+   P.ready=true;pumpSB();
+  }catch(e){snack('Video decoder setup failed: '+e.message)}
  },{once:true});
+ return true;
+}
+function onConfig(d){
+ gotVideoConfig=true;
+ const w=d[1]<<8|d[2],h=d[3]<<8|d[4];let sps,pps;
+ for(const n of nalus(d.subarray(5))){const t=n[0]&31;if(t==7)sps=n;else if(t==8)pps=n}
+ if(!sps||!pps){snack('Phone sent incomplete video configuration');return}
+ savedVideoConfig={sps:sps.slice(),pps:pps.slice(),w,h};
+ if(window.VideoDecoder && !forceMse){
+  try{
+   try{WC.dec&&WC.dec.close()}catch(e){}
+   WC.csd=d.subarray(5).slice();WC.key=false;
+   WC.dec=new VideoDecoder({
+    output:f=>{
+     const t0=WC.arr.get(f.timestamp);
+     if(t0){lat(performance.now()-t0);WC.arr.delete(f.timestamp)}
+     if(cv.width!=f.displayWidth||cv.height!=f.displayHeight){cv.width=f.displayWidth;cv.height=f.displayHeight}
+     cx.drawImage(f,0,0);f.close();showMode('canvas');
+    },
+    error:e=>{
+     snack('Fast video decoder failed; switching player');
+     WC.dec=null;forceMse=true;
+     const c=savedVideoConfig;
+     if(c && startMseDecoder(c.sps,c.pps,c.w,c.h))requestFreshKeyframe();
+     else $('phTxt').textContent='Video decoder unavailable';
+    }
+   });
+   WC.dec.configure({codec:`avc1.${hex(sps[1])}${hex(sps[2])}${hex(sps[3])}`,optimizeForLatency:true});
+   return;
+  }catch(e){
+   try{WC.dec&&WC.dec.close()}catch(_){}
+   WC.dec=null;forceMse=true;
+   snack('Switching to compatible video player');
+  }
+ }
+ if(!startMseDecoder(sps,pps,w,h))$('phTxt').textContent='Video decoder unavailable';
 }
 function onFrame(d){
+ gotVideoFrame=true;
  const key=d[1]==1;
  if(WC.dec){
   if(!WC.key&&!key)return;
@@ -206,13 +245,14 @@ function showMode(m){
  vid.style.display=m=='video'?'block':'none';cv.style.display=m=='canvas'?'block':'none';img.style.display=m=='jpeg'?'block':'none';$('ph').style.display=m?'none':'flex';
 }
 function onJpeg(d){
+ gotVideoFrame=true;
  const u=URL.createObjectURL(new Blob([d.subarray(1)],{type:'image/jpeg'}));
  img.onload=()=>{if(lastJpg&&lastJpg!=u)URL.revokeObjectURL(lastJpg);lastJpg=u};img.src=u;
  frames++;bytes+=d.length;showMode('jpeg');
 }
 
 /* ================= Connection ================= */
-const RELAY_MODE=new URLSearchParams(location.search).get('relay')==='1';
+const RELAY_MODE=true;
 const RELAY_ENDPOINT='https://vitremote-relay.bhatiravindara64.workers.dev';
 const RELAY_SECRET='00d64a41a58048d93a4219ffac9fbd5c259a7ee90eb0ae427746a2e2dc87323a';
 function login(){const p=$('pin').value.trim();if(!p)return;localStorage.pin=p;retry=0;connect()}
@@ -221,7 +261,7 @@ function connect(){
  const pin=localStorage.pin;if(!pin)return;
  ws=RELAY_MODE?new WebSocket(`${RELAY_ENDPOINT.replace(/^https:/,'wss:')}/room/${encodeURIComponent(pin)}?role=viewer&token=${encodeURIComponent(RELAY_SECRET)}`):new WebSocket(`${location.protocol=='https:'?'wss':'ws'}://${location.host}/ws?k=${encodeURIComponent(pin)}`);
  ws.binaryType='arraybuffer';let opened=false;
- ws.onopen=()=>{opened=true;retry=0;$('login').style.display='none';setSt(1);sent='';stream();
+ ws.onopen=()=>{opened=true;retry=0;setSt(1);sent='';gotVideoConfig=false;gotVideoFrame=false;clearTimeout(streamWatchdog);streamWatchdog=setTimeout(()=>{if(!showMode.m){$('phTxt').textContent=gotVideoConfig?'Video started but no frames arrived':'Connected; waiting for phone screen capture permission'}},9000);stream();
   clearInterval(timer);timer=setInterval(()=>{if(!document.hidden)send('i')},4000)};
  ws.onclose=()=>{setSt(0);clearInterval(timer);
   if(!opened&&retry==0){$('login').style.display='flex';$('lerr').textContent='Wrong PIN or phone unreachable';retry=1;return}
@@ -232,7 +272,7 @@ function connect(){
    if(d[0]==4)onFrame(d);else if(d[0]==3)onConfig(d);else if(d[0]==1)onJpeg(d);else if(d[0]==2)download(new Blob([d.subarray(1)],{type:'image/jpeg'}),'jpg');
    return}
   const m=JSON.parse(e.data);
-  if(m.t=='info')showInfo(m);else if(m.t=='err'||m.t=='ok')snack(m.m)};
+  if(m.t=='info'){$('login').style.display='none';showInfo(m)}else if(m.t=='err'||m.t=='ok')snack(m.m)};
 }
 function setSt(on){$('dot').style.background=on?'var(--ok)':'var(--error)';$('stt').textContent=on?'Online':'Offline';
  if(!on){showMode('');$('phTxt').textContent='Reconnecting…'}else $('phTxt').textContent='Starting stream…'}

@@ -33,7 +33,13 @@ object SpsFix {
                 start = i + 3; i += 3
             } else i++
         }
-        if (start >= 0) res.add(d.copyOfRange(start, d.size))
+        if (start >= 0) {
+            res.add(d.copyOfRange(start, d.size))
+        } else if (d.isNotEmpty()) {
+            // Some MediaCodec implementations return a bare NAL unit without
+            // an Annex-B start code in csd-0/csd-1.
+            res.add(d)
+        }
         return res
     }
 

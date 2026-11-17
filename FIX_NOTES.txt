@@ -1,0 +1,21 @@
+vitRemote troubleshooting patch
+===============================
+
+Changes in this ZIP:
+- Normalize H.264 SPS/PPS separately because some Android MediaCodec implementations
+  provide codec-specific data without Annex-B start codes.
+- Add a raw-NAL fallback in SpsFix.
+- Add browser decoder fallback: if WebCodecs cannot configure/decode H.264, the viewer
+  switches to the MediaSource player and requests a fresh keyframe.
+- Show a useful status message if the phone connects but no video configuration/frames arrive.
+- Keep the app's bundled viewer and Cloudflare hosted viewer HTML in sync.
+
+Validation:
+- JavaScript syntax checked with Node.js.
+- Android Gradle build could not be run in this environment because the Gradle distribution
+  could not be downloaded (network DNS unavailable). Use the repository's GitHub Actions
+  Android APK Build workflow to compile the APK.
+
+Important:
+- Cloudflare Worker must already be deployed with the same PAIRING_SECRET configured on
+  the Worker and in RelayConfig.kt / viewer HTML. Do not share that secret publicly.
