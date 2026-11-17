@@ -221,7 +221,7 @@ function connect(){
  const pin=localStorage.pin;if(!pin)return;
  ws=RELAY_MODE?new WebSocket(`${RELAY_ENDPOINT.replace(/^https:/,'wss:')}/room/${encodeURIComponent(pin)}?role=viewer&token=${encodeURIComponent(RELAY_SECRET)}`):new WebSocket(`${location.protocol=='https:'?'wss':'ws'}://${location.host}/ws?k=${encodeURIComponent(pin)}`);
  ws.binaryType='arraybuffer';let opened=false;
- ws.onopen=()=>{opened=true;retry=0;$('login').style.display='none';setSt(1);sent='';stream();
+ ws.onopen=()=>{opened=true;retry=0;setSt(1);sent='';stream();
   clearInterval(timer);timer=setInterval(()=>{if(!document.hidden)send('i')},4000)};
  ws.onclose=()=>{setSt(0);clearInterval(timer);
   if(!opened&&retry==0){$('login').style.display='flex';$('lerr').textContent='Wrong PIN or phone unreachable';retry=1;return}
@@ -232,7 +232,7 @@ function connect(){
    if(d[0]==4)onFrame(d);else if(d[0]==3)onConfig(d);else if(d[0]==1)onJpeg(d);else if(d[0]==2)download(new Blob([d.subarray(1)],{type:'image/jpeg'}),'jpg');
    return}
   const m=JSON.parse(e.data);
-  if(m.t=='info')showInfo(m);else if(m.t=='err'||m.t=='ok')snack(m.m)};
+  if(m.t=='info'){$('login').style.display='none';showInfo(m)}else if(m.t=='err'||m.t=='ok')snack(m.m)};
 }
 function setSt(on){$('dot').style.background=on?'var(--ok)':'var(--error)';$('stt').textContent=on?'Online':'Offline';
  if(!on){showMode('');$('phTxt').textContent='Reconnecting…'}else $('phTxt').textContent='Starting stream…'}
